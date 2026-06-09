@@ -144,6 +144,7 @@ enumset = "1.1"
 env_logger = "0.11.10"
 err_trail = { version = "0.11.0", features = ["tracing"] }
 error_set = "0.9.1"
+event-listener = "5.4"
 figlet-rs = "1.0.0"
 figment = { version = "0.10.19", features = ["toml", "env"] }
 file-operation = "0.8.19"

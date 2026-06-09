@@ -22,11 +22,15 @@ use crate::binary::dispatch::{
 use crate::shard::IggyShard;
 use crate::shard::system::messages::PollingArgs;
 use crate::streaming::session::Session;
+use futures::FutureExt;
 use iggy_binary_protocol::requests::messages::PollMessagesRequest;
 use iggy_common::SenderKind;
 use iggy_common::{IggyError, PooledBuffer};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use tracing::{debug, trace};
+
+const POLL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn handle_poll_messages(
     req: PollMessagesRequest,
@@ -52,9 +56,37 @@ pub async fn handle_poll_messages(
     let user_id = session.get_user_id();
     let client_id = session.client_id;
     let topic = shard.resolve_topic_for_poll(user_id, &stream_id, &topic_id)?;
-    let (metadata, mut batch) = shard
-        .poll_messages(client_id, topic, consumer, partition_id, args)
-        .await?;
+
+    let deadline = Instant::now() + POLL_WAIT_TIMEOUT;
+
+    let (metadata, mut batch) = loop {
+        let listener = shard.poll_notify.listen();
+
+        let (metadata, batch) = shard
+            .poll_messages(client_id, topic, consumer.clone(), partition_id, args)
+            .await?;
+
+        if batch.count() > 0 {
+            break (metadata, batch);
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            break (metadata, batch);
+        }
+
+        let remaining = deadline - now;
+        let sleep_fut = compio::time::sleep(remaining);
+        futures::select! {
+            _ = listener.fuse() => {
+                trace!("Poll waiter notified, re-polling");
+            }
+            _ = sleep_fut.fuse() => {
+                trace!("Poll wait timeout expired");
+                break (metadata, batch);
+            }
+        }
+    };
 
     let response_length = 4 + 8 + 4 + batch.size();
     let response_length_bytes = response_length.to_le_bytes();

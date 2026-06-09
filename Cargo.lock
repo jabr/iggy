@@ -10101,6 +10101,7 @@ dependencies = [
  "dotenvy",
  "err_trail",
  "error_set",
+ "event-listener",
  "figlet-rs",
  "flume 0.12.0",
  "fs2",

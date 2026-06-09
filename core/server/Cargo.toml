@@ -58,6 +58,7 @@ dashmap = { workspace = true }
 dotenvy = { workspace = true }
 err_trail = { workspace = true }
 error_set = { workspace = true }
+event-listener = { workspace = true }
 figlet-rs = { workspace = true }
 flume = { workspace = true }
 fs2 = { workspace = true }

@@ -95,6 +95,7 @@ pub struct IggyShard {
     pub(crate) config_writer_notify: async_channel::Sender<()>,
     config_writer_receiver: async_channel::Receiver<()>,
     pub(crate) task_registry: Rc<TaskRegistry>,
+    pub(crate) poll_notify: event_listener::Event,
 }
 
 impl IggyShard {

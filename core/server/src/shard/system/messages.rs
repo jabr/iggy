@@ -678,7 +678,7 @@ impl IggyShard {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PollingArgs {
     pub strategy: PollingStrategy,
     pub count: u32,
