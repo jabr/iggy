@@ -184,7 +184,6 @@ impl IggyShardBuilder {
             config_writer_receiver,
             task_registry,
             client_manager,
-            poll_notify: event_listener::Event::new(),
         }
     }
 }

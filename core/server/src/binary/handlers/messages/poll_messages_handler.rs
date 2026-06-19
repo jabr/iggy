@@ -60,7 +60,7 @@ pub async fn handle_poll_messages(
     let deadline = Instant::now() + POLL_WAIT_TIMEOUT;
 
     let (metadata, mut batch) = loop {
-        let listener = shard.poll_notify.listen();
+        let listener = crate::shard::POLL_NOTIFY.listen();
 
         let (metadata, batch) = shard
             .poll_messages(client_id, topic, consumer.clone(), partition_id, args)

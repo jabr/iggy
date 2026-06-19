@@ -67,6 +67,13 @@ pub const COMPONENT: &str = "SHARD";
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 pub const BROADCAST_TIMEOUT: Duration = Duration::from_secs(20);
 
+use event_listener::Event;
+
+/// Global event for poll notification across all shards.
+/// A single shared event ensures poll handlers on any shard are woken
+/// when messages are appended on any shard.
+pub(crate) static POLL_NOTIFY: Event = Event::new();
+
 pub struct IggyShard {
     pub id: u16,
     shards: Vec<ShardConnector<ShardFrame>>,
@@ -95,7 +102,6 @@ pub struct IggyShard {
     pub(crate) config_writer_notify: async_channel::Sender<()>,
     config_writer_receiver: async_channel::Receiver<()>,
     pub(crate) task_registry: Rc<TaskRegistry>,
-    pub(crate) poll_notify: event_listener::Event,
 }
 
 impl IggyShard {
