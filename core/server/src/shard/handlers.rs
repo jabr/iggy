@@ -71,7 +71,7 @@ async fn handle_request(
                 .append_messages_to_local_partition(&namespace, batch, &shard.config.system)
                 .await?;
 
-            crate::shard::POLL_NOTIFY.notify(usize::MAX);
+            crate::shard::topic_notify_notify(namespace.stream_id(), namespace.topic_id());
             shard.metrics.increment_messages(messages_count as u64);
             Ok(ShardResponse::SendMessages)
         }
@@ -417,7 +417,7 @@ async fn handle_request(
                 .append_messages_to_local_partition(&ns, batch, &shard.config.system)
                 .await?;
 
-            crate::shard::POLL_NOTIFY.notify(usize::MAX);
+            crate::shard::topic_notify_notify(ns.stream_id(), ns.topic_id());
             shard.metrics.increment_messages(messages_count as u64);
 
             sender.send_empty_ok_response().await?;

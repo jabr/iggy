@@ -68,11 +68,39 @@ pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 pub const BROADCAST_TIMEOUT: Duration = Duration::from_secs(20);
 
 use event_listener::Event;
+use std::collections::HashMap;
+use std::sync::{LazyLock, RwLock};
 
-/// Global event for poll notification across all shards.
-/// A single shared event ensures poll handlers on any shard are woken
-/// when messages are appended on any shard.
-pub(crate) static POLL_NOTIFY: Event = Event::new();
+/// Per-topic notification events for poll wakeups.
+/// Keyed by (stream_id, topic_id) so poll handlers only wake when messages
+/// arrive on the topic they're polling. Each topic gets its own Event on first
+/// access via `topic_notify_listen` / `topic_notify_notify`.
+pub(crate) static TOPIC_NOTIFY: LazyLock<RwLock<HashMap<(usize, usize), Event>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Register a listener on the per-topic notify event, creating the entry if needed.
+pub(crate) fn topic_notify_listen(
+    stream_id: usize,
+    topic_id: usize,
+) -> impl event_listener::Listener {
+    TOPIC_NOTIFY
+        .write()
+        .expect("TOPIC_NOTIFY lock poisoned")
+        .entry((stream_id, topic_id))
+        .or_insert_with(Event::new)
+        .listen()
+}
+
+/// Notify all poll handlers waiting on a specific topic.
+pub(crate) fn topic_notify_notify(stream_id: usize, topic_id: usize) {
+    if let Some(event) = TOPIC_NOTIFY
+        .read()
+        .expect("TOPIC_NOTIFY lock poisoned")
+        .get(&(stream_id, topic_id))
+    {
+        event.notify(usize::MAX);
+    }
+}
 
 pub struct IggyShard {
     pub id: u16,

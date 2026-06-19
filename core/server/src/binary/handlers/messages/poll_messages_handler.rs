@@ -66,7 +66,7 @@ pub async fn handle_poll_messages(
         let partitions = shard.get_consumer_group_partitions(client_id, topic, &consumer)?;
 
         loop {
-            let listener = crate::shard::POLL_NOTIFY.listen();
+            let listener = crate::shard::topic_notify_listen(topic.stream_id, topic.topic_id);
 
             let mut found = None;
             let mut last_metadata = None;
@@ -112,7 +112,7 @@ pub async fn handle_poll_messages(
         )?;
 
         loop {
-            let listener = crate::shard::POLL_NOTIFY.listen();
+            let listener = crate::shard::topic_notify_listen(topic.stream_id, topic.topic_id);
 
             let (metadata, batch) = shard
                 .poll_messages(client_id, topic, consumer.clone(), resolved_partition_id, args)
