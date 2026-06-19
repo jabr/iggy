@@ -24,7 +24,7 @@ use crate::shard::system::messages::PollingArgs;
 use crate::streaming::session::Session;
 use futures::FutureExt;
 use iggy_binary_protocol::requests::messages::PollMessagesRequest;
-use iggy_common::SenderKind;
+use iggy_common::{ConsumerKind, SenderKind};
 use iggy_common::{IggyError, PooledBuffer};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -59,31 +59,84 @@ pub async fn handle_poll_messages(
 
     let deadline = Instant::now() + POLL_WAIT_TIMEOUT;
 
-    let (metadata, mut batch) = loop {
-        let listener = crate::shard::POLL_NOTIFY.listen();
+    let (metadata, mut batch) = if consumer.kind == ConsumerKind::ConsumerGroup {
+        // Consumer group: get all assigned partitions and check each one per iteration.
+        // This avoids the round-robin cycling problem where the deferred loop would
+        // spend 5s on each empty partition before reaching the one with messages.
+        let partitions = shard.get_consumer_group_partitions(client_id, topic, &consumer)?;
 
-        let (metadata, batch) = shard
-            .poll_messages(client_id, topic, consumer.clone(), partition_id, args)
-            .await?;
+        loop {
+            let listener = crate::shard::POLL_NOTIFY.listen();
 
-        if batch.count() > 0 {
-            break (metadata, batch);
-        }
-
-        let now = Instant::now();
-        if now >= deadline {
-            break (metadata, batch);
-        }
-
-        let remaining = deadline - now;
-        let sleep_fut = compio::time::sleep(remaining);
-        futures::select! {
-            _ = listener.fuse() => {
-                trace!("Poll waiter notified, re-polling");
+            let mut found = None;
+            let mut last_metadata = None;
+            for &pid in &partitions {
+                let (m, b) = shard
+                    .poll_messages(client_id, topic, consumer.clone(), Some(pid), args)
+                    .await?;
+                if b.count() > 0 {
+                    found = Some((m, b));
+                    break;
+                }
+                last_metadata = Some((m, b));
             }
-            _ = sleep_fut.fuse() => {
-                trace!("Poll wait timeout expired");
+
+            if let Some(result) = found {
+                break result;
+            }
+
+            let (empty_metadata, empty_batch) = last_metadata
+                .expect("consumer group must have at least one partition");
+
+            let now = Instant::now();
+            if now >= deadline {
+                break (empty_metadata, empty_batch);
+            }
+
+            let remaining = deadline - now;
+            let sleep_fut = compio::time::sleep(remaining);
+            futures::select! {
+                _ = listener.fuse() => {
+                    trace!("Poll waiter notified, re-polling all partitions");
+                }
+                _ = sleep_fut.fuse() => {
+                    trace!("Poll wait timeout expired");
+                    break (empty_metadata, empty_batch);
+                }
+            }
+        }
+    } else {
+        // Single consumer: poll one partition, deferred wait if empty.
+        let resolved_partition_id = shard.resolve_partition_for_poll(
+            client_id, topic, &consumer, partition_id,
+        )?;
+
+        loop {
+            let listener = crate::shard::POLL_NOTIFY.listen();
+
+            let (metadata, batch) = shard
+                .poll_messages(client_id, topic, consumer.clone(), resolved_partition_id, args)
+                .await?;
+
+            if batch.count() > 0 {
                 break (metadata, batch);
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                break (metadata, batch);
+            }
+
+            let remaining = deadline - now;
+            let sleep_fut = compio::time::sleep(remaining);
+            futures::select! {
+                _ = listener.fuse() => {
+                    trace!("Poll waiter notified, re-polling");
+                }
+                _ = sleep_fut.fuse() => {
+                    trace!("Poll wait timeout expired");
+                    break (metadata, batch);
+                }
             }
         }
     };

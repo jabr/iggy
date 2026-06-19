@@ -189,6 +189,42 @@ impl IggyShard {
         }
     }
 
+    /// Pre-resolves the partition ID for a poll request without advancing
+    /// the consumer group round-robin counter. Used by the deferred poll handler
+    /// to ensure re-polls hit the same partition.
+    pub fn resolve_partition_for_poll(
+        &self,
+        client_id: u32,
+        topic: ResolvedTopic,
+        consumer: &Consumer,
+        partition_id: Option<u32>,
+    ) -> Result<Option<u32>, IggyError> {
+        let result = self.resolve_consumer_with_partition_id(
+            topic,
+            consumer,
+            client_id,
+            partition_id,
+            false, // don't advance round-robin counter
+        )?;
+        Ok(result.map(|(_, pid)| pid as u32))
+    }
+
+    /// Returns all partition IDs assigned to a consumer group member.
+    pub fn get_consumer_group_partitions(
+        &self,
+        client_id: u32,
+        topic: ResolvedTopic,
+        consumer: &Consumer,
+    ) -> Result<Vec<u32>, IggyError> {
+        let partitions = self.metadata.get_consumer_group_member_partitions(
+            topic.stream_id,
+            topic.topic_id,
+            &consumer.id,
+            client_id,
+        )?;
+        Ok(partitions.into_iter().map(|p| p as u32).collect())
+    }
+
     /// Resolves topic and verifies user has append permission atomically.
     pub fn resolve_topic_for_append(
         &self,

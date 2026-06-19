@@ -424,6 +424,86 @@ impl Metadata {
         Ok(None)
     }
 
+    /// Returns all partition IDs assigned to a consumer group member.
+    /// Used by the deferred poll handler to check all partitions in each iteration.
+    pub fn get_consumer_group_member_partitions(
+        &self,
+        stream_id: StreamId,
+        topic_id: TopicId,
+        group_identifier: &Identifier,
+        client_id: u32,
+    ) -> Result<Vec<usize>, IggyError> {
+        let metadata = self.load();
+
+        let group_id = {
+            let stream = metadata.streams.get(stream_id).ok_or_else(|| {
+                IggyError::ConsumerGroupIdNotFound(
+                    group_identifier.clone(),
+                    Identifier::numeric(topic_id as u32).unwrap(),
+                )
+            })?;
+            let topic = stream.topics.get(topic_id).ok_or_else(|| {
+                IggyError::ConsumerGroupIdNotFound(
+                    group_identifier.clone(),
+                    Identifier::numeric(topic_id as u32).unwrap(),
+                )
+            })?;
+            match group_identifier.kind {
+                IdKind::Numeric => {
+                    group_identifier.get_u32_value().map_err(|_| {
+                        IggyError::ConsumerGroupIdNotFound(
+                            group_identifier.clone(),
+                            Identifier::numeric(topic_id as u32).unwrap(),
+                        )
+                    })? as ConsumerGroupId
+                }
+                IdKind::String => {
+                    let name = group_identifier.get_cow_str_value().map_err(|_| {
+                        IggyError::ConsumerGroupIdNotFound(
+                            group_identifier.clone(),
+                            Identifier::numeric(topic_id as u32).unwrap(),
+                        )
+                    })?;
+                    *topic
+                        .consumer_group_index
+                        .get(name.as_ref())
+                        .ok_or_else(|| {
+                            IggyError::ConsumerGroupIdNotFound(
+                                group_identifier.clone(),
+                                Identifier::numeric(topic_id as u32).unwrap(),
+                            )
+                        })?
+                }
+            }
+        };
+
+        let group = metadata
+            .streams
+            .get(stream_id)
+            .and_then(|s| s.topics.get(topic_id))
+            .and_then(|t| t.consumer_groups.get(group_id))
+            .ok_or_else(|| {
+                IggyError::ConsumerGroupIdNotFound(
+                    group_identifier.clone(),
+                    Identifier::numeric(topic_id as u32).unwrap(),
+                )
+            })?;
+
+        let (_, member) = group
+            .members
+            .iter()
+            .find(|(_, m)| m.client_id == client_id)
+            .ok_or_else(|| {
+                IggyError::ConsumerGroupMemberNotFound(
+                    client_id,
+                    group_identifier.clone(),
+                    Identifier::numeric(topic_id as u32).unwrap(),
+                )
+            })?;
+
+        Ok(member.partitions.clone())
+    }
+
     /// Record the last offset returned to a CG member during poll.
     pub fn record_polled_offset(
         &self,
