@@ -65,43 +65,54 @@ pub async fn handle_poll_messages(
         // spend 5s on each empty partition before reaching the one with messages.
         let partitions = shard.get_consumer_group_partitions(client_id, topic, &consumer)?;
 
-        loop {
-            let listener = crate::shard::topic_notify_listen(topic.stream_id, topic.topic_id);
+        if partitions.is_empty() {
+            // Member has no partitions assigned (e.g., during rebalance or if another
+            // member took all partitions). Return empty immediately.
+            (
+                iggy_common::IggyPollMetadata::new(0, 0),
+                iggy_common::IggyMessagesBatchSet::empty(),
+            )
+        } else {
+            loop {
+                let listener = crate::shard::topic_notify_listen(topic.stream_id, topic.topic_id);
 
-            let mut found = None;
-            let mut last_metadata = None;
-            for &pid in &partitions {
-                let (m, b) = shard
-                    .poll_messages(client_id, topic, consumer.clone(), Some(pid), args)
-                    .await?;
-                if b.count() > 0 {
-                    found = Some((m, b));
-                    break;
+                let mut found = None;
+                let mut last_metadata = None;
+                for &pid in &partitions {
+                    let (m, b) = shard
+                        .poll_messages(client_id, topic, consumer.clone(), Some(pid), args)
+                        .await?;
+                    if b.count() > 0 {
+                        found = Some((m, b));
+                        break;
+                    }
+                    last_metadata = Some((m, b));
                 }
-                last_metadata = Some((m, b));
-            }
 
-            if let Some(result) = found {
-                break result;
-            }
-
-            let (empty_metadata, empty_batch) = last_metadata
-                .expect("consumer group must have at least one partition");
-
-            let now = Instant::now();
-            if now >= deadline {
-                break (empty_metadata, empty_batch);
-            }
-
-            let remaining = deadline - now;
-            let sleep_fut = compio::time::sleep(remaining);
-            futures::select! {
-                _ = listener.fuse() => {
-                    trace!("Poll waiter notified, re-polling all partitions");
+                if let Some(result) = found {
+                    break result;
                 }
-                _ = sleep_fut.fuse() => {
-                    trace!("Poll wait timeout expired");
+
+                let (empty_metadata, empty_batch) = last_metadata.unwrap_or((
+                    iggy_common::IggyPollMetadata::new(0, 0),
+                    iggy_common::IggyMessagesBatchSet::empty(),
+                ));
+
+                let now = Instant::now();
+                if now >= deadline {
                     break (empty_metadata, empty_batch);
+                }
+
+                let remaining = deadline - now;
+                let sleep_fut = compio::time::sleep(remaining);
+                futures::select! {
+                    _ = listener.fuse() => {
+                        trace!("Poll waiter notified, re-polling all partitions");
+                    }
+                    _ = sleep_fut.fuse() => {
+                        trace!("Poll wait timeout expired");
+                        break (empty_metadata, empty_batch);
+                    }
                 }
             }
         }
