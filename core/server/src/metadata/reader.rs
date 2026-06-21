@@ -30,6 +30,7 @@ use iggy_common::{
 };
 use left_right::ReadGuard;
 use std::sync::Arc;
+use tracing::error;
 use std::sync::atomic::Ordering;
 
 /// Thread-safe wrapper for GlobalMetadata using left-right for lock-free reads.
@@ -50,9 +51,16 @@ impl Metadata {
 
     #[inline]
     pub(super) fn load(&self) -> ReadGuard<'_, InnerMetadata> {
-        self.inner
-            .enter()
-            .expect("metadata not initialized - writer must publish before reads")
+        match self.inner.enter() {
+            Some(guard) => guard,
+            None => {
+                // The WriteHandle has been dropped (shard-0 crashed or is shutting down).
+                // Abort cleanly instead of panicking, which would cascade to other shards
+                // and cause a messy shutdown that systemd can't handle.
+                error!("Metadata writer has been dropped — shutting down process");
+                std::process::abort();
+            }
+        }
     }
 
     pub fn get_stream_id(&self, identifier: &Identifier) -> Option<StreamId> {
